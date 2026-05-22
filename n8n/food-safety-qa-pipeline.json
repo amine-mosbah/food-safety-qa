@@ -1,0 +1,586 @@
+{
+  "name": "Food Safety QA · v0.3 (Form Trigger)",
+  "nodes": [
+    {
+      "parameters": {
+        "formTitle": "Food Safety Q&A Generator",
+        "formDescription": "Upload the official `food_recall_incidents.csv`, pick a hazard-category cluster, and the pipeline will generate, evaluate, and write Q&A pairs to your Google Sheet.",
+        "formFields": {
+          "values": [
+            {
+              "fieldLabel": "Upload food_recall_incidents.csv",
+              "fieldType": "file",
+              "acceptFileTypes": ".csv",
+              "requiredField": true
+            },
+            {
+              "fieldLabel": "Hazard category (cluster)",
+              "fieldType": "dropdown",
+              "fieldOptions": {
+                "values": [
+                  {
+                    "option": "allergens (2,527)"
+                  },
+                  {
+                    "option": "biological (2,557)"
+                  },
+                  {
+                    "option": "foreign bodies (943)"
+                  },
+                  {
+                    "option": "chemical (578)"
+                  },
+                  {
+                    "option": "fraud (527)"
+                  },
+                  {
+                    "option": "other hazard (187)"
+                  },
+                  {
+                    "option": "packaging defect (100)"
+                  },
+                  {
+                    "option": "organoleptic aspects (81)"
+                  },
+                  {
+                    "option": "food additives and flavourings (32)"
+                  },
+                  {
+                    "option": "migration (14)"
+                  }
+                ]
+              },
+              "requiredField": true
+            },
+            {
+              "fieldLabel": "Sample size",
+              "fieldType": "number",
+              "placeholder": "50",
+              "requiredField": true
+            },
+            {
+              "fieldLabel": "Google Sheet ID",
+              "fieldType": "text",
+              "placeholder": "1AbCdEfGhIjKlMnOpQrStUvWxYz...",
+              "requiredField": true
+            },
+            {
+              "fieldLabel": "Sheet/tab name",
+              "fieldType": "text",
+              "placeholder": "qa_pairs",
+              "requiredField": true
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "form_trigger",
+      "name": "Form: Upload CSV + Pick Cluster",
+      "type": "n8n-nodes-base.formTrigger",
+      "typeVersion": 2.2,
+      "position": [
+        -1800,
+        400
+      ],
+      "webhookId": "fsqa-form-trigger"
+    },
+    {
+      "parameters": {
+        "operation": "fromFile",
+        "fileFormat": "csv",
+        "binaryPropertyName": "=Upload_food_recall_incidents_csv",
+        "options": {
+          "headerRow": true,
+          "delimiter": ",",
+          "encoding": "utf8"
+        }
+      },
+      "id": "parse_csv",
+      "name": "Parse Uploaded CSV",
+      "type": "n8n-nodes-base.spreadsheetFile",
+      "typeVersion": 2,
+      "position": [
+        -1600,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "language": "javaScript",
+        "jsCode": "// Cluster + stratified sample.\n// Inputs from the form trigger are read via the n8n expression layer.\nconst FORM = $('Form: Upload CSV + Pick Cluster').first().json;\n\n// Form returns the dropdown label verbatim (e.g. \"allergens (2,527)\") — strip the count.\nconst rawCluster = FORM['Hazard category (cluster)'] || '';\nconst CLUSTER = rawCluster.replace(/\\s*\\(.*\\)\\s*$/, '').trim();\nconst SAMPLE_N = Number(FORM['Sample size']) || 50;\nconst TOP_K = 10;\nconst PREFIX_MAP = {\n  'allergens': 'alg', 'biological': 'bio', 'foreign bodies': 'fbd',\n  'fraud': 'frd', 'chemical': 'chm', 'other hazard': 'oth',\n  'packaging defect': 'pkg', 'organoleptic aspects': 'org',\n  'food additives and flavourings': 'faf', 'migration': 'mig'\n};\nconst prefix = PREFIX_MAP[CLUSTER] || CLUSTER.slice(0, 3).toLowerCase();\n\nfunction shuffle(arr) {\n  return arr.map(v => [Math.random(), v]).sort((a, b) => a[0] - b[0]).map(p => p[1]);\n}\n\nconst rows = items.map(it => it.json);\nconst cluster = rows.filter(r => r['hazard-category'] === CLUSTER);\n\nif (!cluster.length) {\n  throw new Error(`No rows found for hazard-category=\"${CLUSTER}\". Check your CSV.`);\n}\n\nconst counts = {};\nfor (const r of cluster) counts[r.hazard] = (counts[r.hazard] || 0) + 1;\nconst topHazards = Object.entries(counts).sort((a, b) => b[1] - a[1]).slice(0, TOP_K).map(p => p[0]);\nconst perTop = Math.max(1, Math.floor(SAMPLE_N / topHazards.length));\n\nconst seen = new Set();\nconst sample = [];\nfor (const h of topHazards) {\n  const pool = shuffle(cluster.filter(r => r.hazard === h));\n  for (const r of pool.slice(0, perTop)) {\n    sample.push(r);\n    seen.add(r);\n  }\n}\nconst rest = shuffle(cluster.filter(r => !seen.has(r)));\nwhile (sample.length < SAMPLE_N && rest.length) sample.push(rest.shift());\n\nreturn sample.slice(0, SAMPLE_N).map((r, i) => ({\n  json: { ...r, record_id: `${prefix}_${String(i + 1).padStart(3, '0')}` }\n}));"
+      },
+      "id": "sample_cluster",
+      "name": "Cluster + Stratified Sample",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1400,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "batchSize": 1,
+        "options": {}
+      },
+      "id": "split_in_batches",
+      "name": "Loop One Record",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        -1200,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "chat",
+        "operation": "message",
+        "modelId": {
+          "__rl": true,
+          "value": "gpt-4o-mini",
+          "mode": "list"
+        },
+        "messages": {
+          "values": [
+            {
+              "role": "system",
+              "content": "=You are a senior food safety analyst at a national regulatory agency (e.g., FDA, FSANZ, FSAI). You design questions that real food safety professionals — inspectors, recall officers, quality managers, journalists, and informed consumers — actually ask when they read a recall report.\n\nA REALISTIC food safety question has ALL of these properties:\n\n1. GROUNDED — The question is fully answerable from the recall text + metadata provided. No outside knowledge is required to answer it.\n\n2. SELF-CONTAINED — A reader who has not seen the source recall must still be able to understand what is being asked. The question must reference the specific product, brand, hazard, or company by name where appropriate.\n\n3. PROFESSIONALLY MOTIVATED — The question reflects something a real stakeholder would care about, such as:\n   - Which allergen or contaminant triggered the recall?\n   - What product, brand, batch, or lot is affected?\n   - What action must consumers, retailers, or distributors take?\n   - Who is the at-risk population (allergy sufferers, children, pregnant individuals, immunocompromised)?\n   - Why did the labelling or supply-chain failure occur?\n   - How were affected products distributed (geography, retailers, dates)?\n\n4. SPECIFIC, NOT GENERIC — Avoid bland phrasings like \"what is this recall about?\". Anchor the question to concrete entities (product name, allergen, country, year).\n\n5. NON-TRIVIAL — The answer should not be a single labelled metadata field that is given to you as input. Do not ask \"what hazard category is this?\" because the category is provided to you. Ask about something that requires reading the recall text.\n\n6. ONE CLEAR ANSWER — A competent reader of the source must be able to point to a single, defensible answer. Avoid open-ended opinion questions (\"is this recall serious?\").\n\n7. ANSWERABLE FROM EXPLICIT SOURCE FACTS — Before producing the question, mentally check that you yourself can answer it using only spans from the title, text, or metadata. If the only candidate answer would require speculation, paraphrase, or facts that are merely implied but never stated (e.g., the recall text says \"an ingredient that contains milk protein\" without naming the ingredient — do NOT ask \"what specific ingredient\"), pick a different angle on the recall.\n\nFor each question you generate, you MUST also produce a single-sentence JUSTIFICATION explaining why this question satisfies the realism rubric above. The justification is part of the deliverable, not optional.\n\nOutput strict JSON only. No prose outside the JSON. No markdown fencing."
+            },
+            {
+              "role": "user",
+              "content": "=Generate exactly ONE realistic food safety question about the recall below.\n\n###Recall record\n- record_id: {{ $json.record_id }}\n- date: {{ $json.year }}-{{ $json.month }}-{{ $json.day }}\n- country: {{ $json.country }}\n- product: {{ $json.product }}\n- product-category (reference only — do NOT ask about this directly): {{ $json['product-category'] }}\n- hazard: {{ $json.hazard }}\n- hazard-category (reference only — do NOT ask about this directly): {{ $json['hazard-category'] }}\n- title: {{ $json.title }}\n- text: {{ $json.text }}\n\n###Output (strict JSON, no markdown):\n{\n  \"question\": \"...\",\n  \"justification\": \"<one sentence explaining why this question is realistic per the rubric>\"\n}"
+            }
+          ]
+        },
+        "jsonOutput": true,
+        "options": {
+          "temperature": 0.7
+        }
+      },
+      "id": "stage1_qgen",
+      "name": "Stage 1 · Q-gen",
+      "type": "@n8n/n8n-nodes-langchain.openAi",
+      "typeVersion": 1.7,
+      "position": [
+        -1000,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "language": "javaScript",
+        "jsCode": "const src = $('Loop One Record').item.json;\nconst raw = $input.item.json;\nconst content = raw.message?.content ?? raw.content ?? raw.text ?? raw;\nlet parsed;\ntry { parsed = typeof content === 'string' ? JSON.parse(content) : content; }\ncatch (e) { return { json: { ...src, error: 'qgen_parse_failed' } }; }\nreturn { json: { ...src, question: parsed.question, justification: parsed.justification } };"
+      },
+      "id": "parse_qgen",
+      "name": "Parse Q-gen",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -800,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "chat",
+        "operation": "message",
+        "modelId": {
+          "__rl": true,
+          "value": "gpt-4o-mini",
+          "mode": "list"
+        },
+        "messages": {
+          "values": [
+            {
+              "role": "system",
+              "content": "=You are a food safety evaluator. Your job is to look at a question about a food recall and decompose it into the minimal set of facts a correct answer MUST contain (required items), plus additional facts that strengthen the answer but are not strictly necessary (optional items).\n\nRequired items must satisfy ALL of these:\n1. EXTRACTABLE — The fact is verifiable from the recall text or metadata provided.\n2. ESSENTIAL — Omitting this fact from the answer would make the answer incorrect or seriously incomplete.\n3. ATOMIC — Each item is a single fact (a contaminant name, a product name, a date, an action), not a sentence.\n\nOptional items must satisfy:\n1. EXTRACTABLE — Also verifiable from the source.\n2. ENRICHING — Including these makes the answer more informative, but a competent answer without them is still acceptable.\n\nGuidelines:\n- Produce 1–3 required items per question. If a question is very narrow (e.g., \"what hazard?\"), 1 required item is fine. If it's a multi-hop question, 2–3 required items.\n- Produce 0–5 optional items.\n- Each item is a short string (1–8 words), not a sentence.\n- Do NOT include items that are not present in the source recall.\n- Do NOT include items that paraphrase the question itself.\n\nOutput strict JSON only. No prose, no markdown."
+            },
+            {
+              "role": "user",
+              "content": "=Given the recall record and the question, extract the required and optional answer items.\n\n###Recall record\n- record_id: {{ $json.record_id }}\n- date: {{ $json.year }}-{{ $json.month }}-{{ $json.day }}\n- country: {{ $json.country }}\n- product: {{ $json.product }}\n- product-category: {{ $json['product-category'] }}\n- hazard: {{ $json.hazard }}\n- hazard-category: {{ $json['hazard-category'] }}\n- title: {{ $json.title }}\n- text: {{ $json.text }}\n\n###Question\n{{ $json.question }}\n\n###Output (strict JSON, no markdown):\n{\n  \"required_items\": [\"...\", \"...\"],\n  \"optional_items\": [\"...\", \"...\"]\n}"
+            }
+          ]
+        },
+        "jsonOutput": true,
+        "options": {
+          "temperature": 0.0
+        }
+      },
+      "id": "stage2_items",
+      "name": "Stage 2 · Required/Optional Items",
+      "type": "@n8n/n8n-nodes-langchain.openAi",
+      "typeVersion": 1.7,
+      "position": [
+        -600,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "language": "javaScript",
+        "jsCode": "const src = $('Parse Q-gen').item.json;\nconst raw = $input.item.json;\nconst content = raw.message?.content ?? raw.content ?? raw.text ?? raw;\nlet parsed;\ntry { parsed = typeof content === 'string' ? JSON.parse(content) : content; }\ncatch (e) { return { json: { ...src, error: 'items_parse_failed' } }; }\nreturn { json: { ...src, required_items: parsed.required_items || [], optional_items: parsed.optional_items || [] } };"
+      },
+      "id": "parse_items",
+      "name": "Parse Items",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -400,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "chat",
+        "operation": "message",
+        "modelId": {
+          "__rl": true,
+          "value": "gpt-4o-mini",
+          "mode": "list"
+        },
+        "messages": {
+          "values": [
+            {
+              "role": "system",
+              "content": "=You are a senior food safety analyst writing the model gold answer for a question about a food recall.\n\nYour answer MUST:\n1. BE FULLY GROUNDED — Every claim in your answer is supported by a span of text in the recall title, body, or metadata. Do not introduce outside knowledge or speculation.\n2. BE CONCISE — 5 to 40 words. One or two crisp sentences.\n3. BE SELF-CONTAINED — A reader who has not seen the recall must still understand the answer in context.\n4. USE NEUTRAL, PROFESSIONAL LANGUAGE — Avoid hedging (\"I think\", \"probably\"), avoid recall report jargon that wasn't in the source.\n5. END WITH A SHORT EVIDENCE PHRASE — A trailing parenthetical of the form \"(source: title/text)\" identifying where in the recall the answer comes from.\n6. ECHO KEY ENTITIES BY NAME — When the question names or implies a specific product, brand, package size, date, batch/lot code, or required action (return / dispose / do not eat / contact X), your answer MUST restate that entity by name rather than using a pronoun or generic reference (\"the product\", \"it\"). The answer should be readable in isolation as a complete fact-bearing statement, even if it ends up slightly longer (still within 5-40 words). Example: instead of \"Consumers should return it for a refund\", write \"Consumers should return the Brand X 5oz tuna to the store for a refund\".\n7. PRESERVE ALL ACTIONS — If the source lists multiple consumer actions (e.g., \"do not eat AND return to store\"), include all of them in the answer when the question asks for the required action.\n\nIf the recall does NOT contain enough information to answer the question, return:\n  \"INSUFFICIENT_CONTEXT\"\n\nOutput strict JSON only. No prose, no markdown."
+            },
+            {
+              "role": "user",
+              "content": "=Given the recall record and the question, write the gold answer.\n\n###Recall record\n- record_id: {{ $json.record_id }}\n- date: {{ $json.year }}-{{ $json.month }}-{{ $json.day }}\n- country: {{ $json.country }}\n- product: {{ $json.product }}\n- product-category: {{ $json['product-category'] }}\n- hazard: {{ $json.hazard }}\n- hazard-category: {{ $json['hazard-category'] }}\n- title: {{ $json.title }}\n- text: {{ $json.text }}\n\n###Question\n{{ $json.question }}\n\n###Output (strict JSON, no markdown):\n{\n  \"answer\": \"...\"\n}"
+            }
+          ]
+        },
+        "jsonOutput": true,
+        "options": {
+          "temperature": 0.0
+        }
+      },
+      "id": "stage3_agen",
+      "name": "Stage 3 · Answer-gen",
+      "type": "@n8n/n8n-nodes-langchain.openAi",
+      "typeVersion": 1.7,
+      "position": [
+        -200,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "language": "javaScript",
+        "jsCode": "const src = $('Parse Items').item.json;\nconst raw = $input.item.json;\nconst content = raw.message?.content ?? raw.content ?? raw.text ?? raw;\nlet parsed;\ntry { parsed = typeof content === 'string' ? JSON.parse(content) : content; }\ncatch (e) { return { json: { ...src, error: 'agen_parse_failed' } }; }\nreturn { json: { ...src, answer: parsed.answer || '' } };"
+      },
+      "id": "parse_agen",
+      "name": "Parse Answer",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        0,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "chat",
+        "operation": "message",
+        "modelId": {
+          "__rl": true,
+          "value": "gpt-4o-mini",
+          "mode": "list"
+        },
+        "messages": {
+          "values": [
+            {
+              "role": "system",
+              "content": "=You are a meticulous food safety evaluator. Your job is to score a candidate answer against an objective set of facts that should appear in a correct answer.\n\nYou receive:\n- The question\n- The required_items list (each MUST appear in the answer, semantically — not just verbatim)\n- The optional_items list (each strengthens the answer if present)\n- The candidate_answer\n\nFor each required_item, mark TRUE if the answer covers that fact (semantic match; paraphrases and synonyms count), FALSE otherwise.\nFor each optional_item, mark TRUE/FALSE on the same criterion.\n\nThen compute:\n- required_coverage = (# required items marked TRUE) / (total required items)   [0.0–1.0]\n- optional_coverage = (# optional items marked TRUE) / (max(1, total optional items))   [0.0–1.0]\n- overall_score = 0.8 * required_coverage + 0.2 * optional_coverage\n\nA required item counts as covered if its meaning is conveyed in the answer, even with different wording. Do NOT require an exact string match. Example: required item \"Listeria\" is covered by an answer mentioning \"Listeria monocytogenes\" or \"Listeria contamination\".\n\nAlso write a one-sentence verdict explaining the score (e.g., what was missing or what was strong).\n\nOutput strict JSON only. No prose, no markdown."
+            },
+            {
+              "role": "user",
+              "content": "=Score the candidate answer.\n\n###Question\n{{ $json.question }}\n\n###Required items (all must be covered for full credit)\n{{ JSON.stringify($json.required_items) }}\n\n###Optional items (each adds partial credit)\n{{ JSON.stringify($json.optional_items) }}\n\n###Candidate answer\n{{ $json.answer }}\n\n###Output (strict JSON, no markdown):\n{\n  \"required_checks\": [\n    {\"item\": \"...\", \"covered\": true|false}\n  ],\n  \"optional_checks\": [\n    {\"item\": \"...\", \"covered\": true|false}\n  ],\n  \"required_coverage\": 0.0,\n  \"optional_coverage\": 0.0,\n  \"overall_score\": 0.0,\n  \"verdict\": \"<one sentence>\"\n}"
+            }
+          ]
+        },
+        "jsonOutput": true,
+        "options": {
+          "temperature": 0.0
+        }
+      },
+      "id": "stage4_judge",
+      "name": "Stage 4 · LLM-as-Judge",
+      "type": "@n8n/n8n-nodes-langchain.openAi",
+      "typeVersion": 1.7,
+      "position": [
+        200,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "language": "javaScript",
+        "jsCode": "const src = $('Parse Answer').item.json;\nconst raw = $input.item.json;\nconst content = raw.message?.content ?? raw.content ?? raw.text ?? raw;\nlet parsed;\ntry { parsed = typeof content === 'string' ? JSON.parse(content) : content; }\ncatch (e) { return { json: { ...src, error: 'judge_parse_failed' } }; }\nreturn { json: {\n  record_id: src.record_id,\n  hazard_category: src['hazard-category'],\n  hazard: src.hazard,\n  product_category: src['product-category'],\n  product: src.product,\n  country: src.country,\n  year: src.year,\n  title: src.title,\n  question: src.question,\n  justification: src.justification,\n  required_items: JSON.stringify(src.required_items),\n  optional_items: JSON.stringify(src.optional_items),\n  answer: src.answer,\n  required_coverage: parsed.required_coverage ?? 0,\n  optional_coverage: parsed.optional_coverage ?? 0,\n  overall_score: parsed.overall_score ?? 0,\n  verdict: parsed.verdict ?? ''\n}};"
+      },
+      "id": "flatten_row",
+      "name": "Flatten Row",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        400,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "={{ $('Form: Upload CSV + Pick Cluster').first().json['Google Sheet ID'] }}",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "={{ $('Form: Upload CSV + Pick Cluster').first().json['Sheet/tab name'] }}",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "autoMapInputData"
+        },
+        "options": {}
+      },
+      "id": "append_sheet",
+      "name": "Append to Google Sheet",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        600,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "amount": 1,
+        "unit": "seconds"
+      },
+      "id": "rate_limit",
+      "name": "Rate Limit",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        800,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "language": "javaScript",
+        "jsCode": "// Aggregate stats once the loop has finished all batches.\n// Pulls the flattened rows that were appended.\nconst all = $items('Flatten Row').map(it => it.json);\nif (!all.length) return [{ json: { summary: 'No rows processed.' } }];\n\nconst avg = arr => arr.reduce((a,b)=>a+b,0) / arr.length;\nconst req = all.map(r => r.required_coverage || 0);\nconst opt = all.map(r => r.optional_coverage || 0);\nconst overall = all.map(r => r.overall_score || 0);\nconst perfectReq = req.filter(x => x >= 1.0).length;\nconst cluster = all[0]?.hazard_category || 'unknown';\n\nreturn [{ json: {\n  cluster,\n  records_processed: all.length,\n  avg_required_coverage: +avg(req).toFixed(3),\n  avg_optional_coverage: +avg(opt).toFixed(3),\n  avg_overall_score: +avg(overall).toFixed(3),\n  pct_perfect_required: `${Math.round(100 * perfectReq / all.length)}%`,\n}}];"
+      },
+      "id": "compute_summary",
+      "name": "Compute Summary",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1000,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "name": "summary",
+              "type": "string",
+              "value": "=Cluster: {{ $json.cluster }} · Records: {{ $json.records_processed }} · avg_req_cov: {{ $json.avg_required_coverage }} · avg_overall: {{ $json.avg_overall_score }} · perfect_req: {{ $json.pct_perfect_required }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "format_summary",
+      "name": "Format Summary",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        1200,
+        400
+      ]
+    }
+  ],
+  "connections": {
+    "Form: Upload CSV + Pick Cluster": {
+      "main": [
+        [
+          {
+            "node": "Parse Uploaded CSV",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Uploaded CSV": {
+      "main": [
+        [
+          {
+            "node": "Cluster + Stratified Sample",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Cluster + Stratified Sample": {
+      "main": [
+        [
+          {
+            "node": "Loop One Record",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop One Record": {
+      "main": [
+        [
+          {
+            "node": "Compute Summary",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Stage 1 · Q-gen",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Stage 1 · Q-gen": {
+      "main": [
+        [
+          {
+            "node": "Parse Q-gen",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Q-gen": {
+      "main": [
+        [
+          {
+            "node": "Stage 2 · Required/Optional Items",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Stage 2 · Required/Optional Items": {
+      "main": [
+        [
+          {
+            "node": "Parse Items",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Items": {
+      "main": [
+        [
+          {
+            "node": "Stage 3 · Answer-gen",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Stage 3 · Answer-gen": {
+      "main": [
+        [
+          {
+            "node": "Parse Answer",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Answer": {
+      "main": [
+        [
+          {
+            "node": "Stage 4 · LLM-as-Judge",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Stage 4 · LLM-as-Judge": {
+      "main": [
+        [
+          {
+            "node": "Flatten Row",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Flatten Row": {
+      "main": [
+        [
+          {
+            "node": "Append to Google Sheet",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Append to Google Sheet": {
+      "main": [
+        [
+          {
+            "node": "Rate Limit",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Rate Limit": {
+      "main": [
+        [
+          {
+            "node": "Loop One Record",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Compute Summary": {
+      "main": [
+        [
+          {
+            "node": "Format Summary",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}

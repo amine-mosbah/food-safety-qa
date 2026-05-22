@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+# Thin wrapper so users can run `./fsqa <command>` from the repo root.
+SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+exec python3 "$SCRIPT_DIR/pipeline/fsqa.py" "$@"
