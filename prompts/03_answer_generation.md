@@ -1,8 +1,8 @@
 # Stage 3 — Answer Generation
 
-**Purpose:** Generate the expected (gold) answer for the question, grounded strictly in the source recall. This is the answer the next-intern's system (or any future student model) is supposed to produce.
+**Purpose:** Generate the expected (gold) answer for the question, grounded strictly in the source recall. Expected gold output for a downstream QA system or fine-tuned student model.
 
-The answer-generation step is fully **decoupled from the question-generation step** (per Fattane's requirement: "Q has to be independent from A"). The model does NOT see the required/optional items at this stage — those are reserved for the judge stage to keep the evaluation honest.
+The answer-generation step is fully **decoupled from the question-generation step** ("Q has to be independent from A"). The model does NOT see the required/optional items at this stage — those are reserved for the judge stage to keep the evaluation honest.
 
 ---
 
@@ -58,4 +58,4 @@ ${question}
 - **Decoupled from question generation** — separate LLM call, can use a different temperature (0.0 for determinism), and the answer-writer does not see the question-writer's justification.
 - **Evidence phrase at end** gives a free, lightweight grounding check — string match the phrase against title/text.
 - **INSUFFICIENT_CONTEXT escape hatch** stops hallucination on edge cases.
-- This is the **gold answer** — what we expect a future fine-tuned model to produce. The judge stage compares student answers against this gold + the required/optional items.
+- This is the **gold answer** — the target output for a future fine-tuned model. The judge stage compares student answers against this gold + the required/optional items.

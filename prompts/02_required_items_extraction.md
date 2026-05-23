@@ -61,7 +61,7 @@ ${question}
 
 ## Why this design
 
-- **Decouples evaluation from generation** — by extracting the required-fact set independently of any candidate answer, the judge stage has an objective reference (Fattane: "items that NEED to be in answer").
+- **Decouples evaluation from generation** — by extracting the required-fact set independently of any candidate answer, the judge stage has an objective reference ("items that NEED to be in answer").
 - **Atomic items** make string-matching feasible as a sanity check before LLM judging.
 - **Required vs optional split** lets the judge compute two complementary metrics: required_coverage (must be 1.0) and optional_coverage (a soft score).
-- This stage runs at temperature 0.0 — we want consistent, conservative extraction, not creativity.
+- This stage runs at temperature 0.0 — keeps extraction consistent and conservative, not creative.

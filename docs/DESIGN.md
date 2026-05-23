@@ -1,25 +1,25 @@
-# HANDOVER — Food Safety Q&A Generator
+# Food Safety Q&A Generator — Design & Operations
 
-**Author:** Amine Mosbah (outgoing intern)
-**Recipient:** Next research intern, Cyber Science Lab, University of Guelph
 **Date:** May 22, 2026 (v0.3)
 
 > **v0.3 note.** The pipeline now reads a single source-of-truth CSV (`data/food_recall_incidents.csv`, 7,546 records) and lets the user pick the cluster at runtime via either the `fsqa` Python CLI or an n8n form. The old train/valid/test split files and pre-sliced cluster CSVs have been deleted — see the changelog at the bottom for the v0.2 → v0.3 migration.
+
+A reusable 4-stage pipeline for synthetic Q&A generation and LLM-as-judge evaluation on the SemEval-2025 food recall corpus.
 
 ---
 
 ## 1. Project context
 
-The broader research goal is to build a **food safety question-answering system** trained on synthetic Q&A pairs generated from the SemEval-2025 Task 9 food recall corpus.
+The broader research goal is a **food safety question-answering system** trained on synthetic Q&A pairs generated from the SemEval-2025 Task 9 food recall corpus.
 
-The full research arc (across multiple interns) is roughly:
+The full research arc is roughly:
 
 ```
 [Cluster corpus]
    ↓
-[Generate synthetic Q&A]            ← this handover delivers this stage
+[Generate synthetic Q&A]            ← this repo implements this stage
    ↓
-[Expert validation (Prof. Dehghantanha / Dr. Fattane / Havva)]
+[Expert validation]
    ↓
 [Build retrieval index (optional RAG)]
    ↓
@@ -28,7 +28,7 @@ The full research arc (across multiple interns) is roughly:
 [Evaluate downstream QA quality with the LLM-as-judge framework]
 ```
 
-This handover delivers the **synthetic Q&A generation + objective evaluation** stage as a reusable, repeatable pipeline. You take it from here.
+This repository implements **synthetic Q&A generation + objective evaluation** as a reusable, repeatable pipeline.
 
 ---
 
@@ -43,7 +43,7 @@ This handover delivers the **synthetic Q&A generation + objective evaluation** s
 - Paper: <https://aclanthology.org/2025.semeval-1.325>
 - CodaLab competition: <https://codalab.lisn.upsaclay.fr/competitions/19955>
 
-**Note on the record count.** The SemEval paper reports 6,644 labeled records (the snapshot used in the competition). The release that ended up on Zenodo / GitHub was later extended to **7,546 records** with additional fields. We use the extended release because it is (a) larger per cluster — especially helpful for long-tail categories like `migration` (14 records), (b) richer in metadata (`product-title`, `hazard-title`, difficulty scores, `language`, `semeval-split`), and (c) the canonical link future researchers will land on.
+**Note on the record count.** The SemEval paper reports 6,644 labeled records (the snapshot used in the competition). The release that ended up on Zenodo / GitHub was later extended to **7,546 records** with additional fields. The pipeline uses the extended release because it is (a) larger per cluster — especially helpful for long-tail categories like `migration` (14 records), (b) richer in metadata (`product-title`, `hazard-title`, difficulty scores, `language`, `semeval-split`), and (c) the canonical link future researchers will land on.
 
 Each record has:
 - `title` — short recall headline
@@ -63,7 +63,7 @@ Clusters and samples are produced **at runtime** by the CLI (`fsqa sample`) or t
 
 ## 3. Clustering choice
 
-We chose `hazard-category` as the cluster definition. The 10 expert-assigned categories are:
+**Default clustering:** `hazard-category`. The 10 expert-assigned categories are:
 
 | Cluster                          | Train count | Notes                              |
 |----------------------------------|-------------|------------------------------------|
@@ -78,8 +78,8 @@ We chose `hazard-category` as the cluster definition. The 10 expert-assigned cat
 | food additives and flavourings   | 24          | Unauthorised additives             |
 | migration                        | 3           | Chemical leach from packaging      |
 
-**Alternatives rejected** (for handover clarity):
-- k-means / HDBSCAN on text embeddings — adds compute + hyperparameters, slower for the next intern to reproduce.
+**Rejected alternatives:**
+- k-means / HDBSCAN on text embeddings — adds compute + hyperparameters, harder to reproduce.
 - `product-category` (22 buckets) — finer-grained but mixes very different hazards.
 
 **Seed cluster: `allergens`** (2,527 records in the v0.3 dataset). Chosen because the recall texts follow a near-template shape (*"Product X is being recalled due to undeclared allergen Y"*), which gives the LLM-as-judge a clean, predictable target.
@@ -112,7 +112,7 @@ Four sequential LLM calls per record. Each stage has its own system prompt (`pro
 │  Output: { question, justification }                                      │
 │  Key idea: the SYSTEM prompt encodes a 7-point "what makes a question    │
 │            realistic" rubric. The model must justify each question per   │
-│            this rubric. This is Fattane's "explain why realistic" req.   │
+│            this rubric ("explain why realistic" requirement).              │
 └──────────────────────────────────────────────────────────────────────────┘
                               ↓
 ┌──────────────────────────────────────────────────────────────────────────┐
@@ -121,8 +121,7 @@ Four sequential LLM calls per record. Each stage has its own system prompt (`pro
 │  Output: { required_items: [...], optional_items: [...] }                 │
 │  Key idea: decompose the expected answer into atomic facts BEFORE the    │
 │            answer is generated. Provides the objective rubric the judge  │
-│            will score against. This is Fattane's "required vs optional"  │
-│            requirement.                                                   │
+│            will score against ("required vs optional" requirement).        │
 └──────────────────────────────────────────────────────────────────────────┘
                               ↓
 ┌──────────────────────────────────────────────────────────────────────────┐
@@ -132,11 +131,10 @@ Four sequential LLM calls per record. Each stage has its own system prompt (`pro
 │  Key idea: COMPLETELY DECOUPLED from Stage 1 — different temperature,    │
 │            no shared context window beyond record+question. The answer   │
 │            model does NOT see the required/optional items, so its A is   │
-│            not biased toward the rubric. This is Fattane's "Q is         │
-│            independent from A" requirement.                               │
+│            not biased toward the rubric ("Q independent from A").         │
 │  Escape hatch: returns "INSUFFICIENT_CONTEXT" if the recall does not     │
 │            contain enough info — these get scored 0.0 by the judge and   │
-│            should be reviewed by a human (often indicates a Stage 1 Q   │
+│            flagged for manual review (often indicates a Stage 1 Q         │
 │            that overshot the source).                                    │
 └──────────────────────────────────────────────────────────────────────────┘
                               ↓
@@ -148,9 +146,8 @@ Four sequential LLM calls per record. Each stage has its own system prompt (`pro
 │            overall_score = 0.8·required + 0.2·optional,                  │
 │            verdict (1 sentence) }                                         │
 │  Key idea: semantic match per item (paraphrases count). Two-axis score   │
-│            so reviewers can filter by required-coverage = 1.0 (correct)  │
-│            vs optional-coverage (informative). This is Fattane's         │
-│            "LLM-as-judge to evaluate" requirement.                        │
+│            supports filtering by required-coverage = 1.0 vs optional.    │
+│            ("LLM-as-judge to evaluate" requirement).                       │
 └──────────────────────────────────────────────────────────────────────────┘
                               ↓
                     outputs/qa_dataset.xlsx
@@ -159,7 +156,7 @@ Four sequential LLM calls per record. Each stage has its own system prompt (`pro
 
 ---
 
-## 5. Key design decisions (and the alternatives we rejected)
+## 5. Key design decisions (and rejected alternatives)
 
 ### 5.1 Why 4 stages, not 2 (Q+A together)
 
@@ -176,7 +173,7 @@ The 4-stage pipeline:
 
 ### 5.2 Why GPT-4o-mini
 
-- Recommended by the TA (paper-family alignment with FinNLP).
+- Aligned with the FinNLP paper family for synthetic Q&A evaluation.
 - $0.025 per record across all 4 stages → ~$1.25 for the seed pilot, ~$166 for full 6,644.
 - Strong JSON-mode reliability and instruction following.
 - If quality at scale needs an upgrade, the most cost-effective place to spend is **only Stage 4 (judge)**: swap to `gpt-4o` there for stricter scoring while keeping Stages 1–3 on `gpt-4o-mini`.
@@ -189,24 +186,24 @@ The earlier draft pipeline generated 4 questions per record covering 4 fixed typ
 - 50 records → 50 rows in the Excel sheet, one row per Q&A pair.
 - Diversity comes from the cluster spanning 10 sub-hazards, not from forcing 4 question types per record.
 
-If the next intern wants to add fixed question types back, the cleanest extension is to **run the pipeline N times per record with different `question_type` injections** into the Stage 1 system prompt — no code surgery needed beyond adding a CLI flag.
+**Extension path:** To add fixed question types back, run the pipeline N times per record with different `question_type` injections into the Stage 1 system prompt — no code surgery needed beyond adding a CLI flag.
 
 ### 5.4 Why auto-extract required items (vs hand-curate)
 
 Hand-curating required items for 50 records is feasible (~2 hours), but doesn't scale to the remaining 9 clusters and 6,594 records. Auto-extraction with a separate LLM call:
 
 - Reuses the same model and infrastructure.
-- Gives the next intern a reproducible pipeline on any cluster.
-- Is spot-checkable: the seed Excel sheet has the required/optional items in every row, so a reviewer can audit them.
+- Keeps the pipeline reproducible on any cluster.
+- Is spot-checkable: the seed Excel sheet has the required/optional items in every row for audit.
 
 ### 5.5 Sampling strategy
 
 Stratified across the top 10 sub-hazards inside the cluster: 4 records from each of the top 10 (40), plus 10 from the long tail. This:
 
 - Avoids the sample being dominated by "milk and products thereof" (which is 588 / 1,854 = 32% of the cluster).
-- Surfaces edge cases (sesame, mustard, sulphites) that the next intern may want to scrutinize.
+- Surfaces edge cases (sesame, mustard, sulphites) worth manual scrutiny.
 
-See `pipeline/sample_cluster.py` to re-sample any cluster.
+Use `./fsqa sample` to re-sample any cluster.
 
 ---
 
@@ -214,7 +211,7 @@ See `pipeline/sample_cluster.py` to re-sample any cluster.
 
 There are two equivalent ways to run the pipeline. Pick whichever matches your style.
 
-### A. Python CLI (`fsqa`) — recommended for the next intern
+### A. Python CLI (`fsqa`) — recommended
 
 ```bash
 # 1. Install deps (typer + rich + openpyxl)
@@ -259,24 +256,22 @@ pip install -r requirements.txt
 ```
 
 ### Tune the prompts
-Edit any of the `prompts/0[1-4]_*.md` files. Both the CLI and the n8n workflow re-parse them — no code change needed. Keep the `## System Prompt` and `## User Prompt Template` headers; the parser keys off them. After editing the `.md`s, **regenerate the n8n JSON** by re-running the bake-prompts script in the build pipeline, or hand-edit the OpenAI nodes in n8n directly.
 
-### Tune the prompts
-Edit any of the `prompts/0[1-4]_*.md` files. The runner re-parses them on every invocation, no code change needed. Keep the `## System Prompt` and `## User Prompt Template` headers — the parser keys off them.
+Edit any of the `prompts/0[1-4]_*.md` files. The CLI and n8n workflow re-parse them on each run — no code change needed. Keep the `## System Prompt` and `## User Prompt Template` headers; the parser keys off them. After editing the `.md` files, regenerate the n8n JSON via the bake-prompts step in the build pipeline, or hand-edit the OpenAI nodes in n8n directly.
 
 ---
 
-## 7. Suggested next steps for the new intern
+## 7. Suggested next steps
 
 In rough priority order:
 
-1. **Review the seed Excel sheet** with Dr. Fattane / Havva. Audit:
+1. **Review the seed Excel sheet.** Audit:
    - Are the questions realistic? (Read `justification` column.)
    - Are the required items correct?
    - Are the answers grounded?
    - Is the judge being too lenient / too strict?
 2. **Iterate on the prompts** (`prompts/0[1-4]_*.md`) based on review feedback. Re-run the seed pilot — it's only $1.25.
-3. **Run the same pipeline on each of the other 9 clusters** with `sample_cluster.py`. Collect 9 more 50-record Excel sheets for expert review.
+3. **Run the same pipeline on each of the other 9 clusters** with `./fsqa sample` and `./fsqa run`. Collect 9 more 50-record Excel sheets for manual review.
 4. **Scale up to full clusters** once the prompt is locked in.
 5. **Index the corpus for RAG.** The recall texts are short (~350 words), so a flat-index FAISS or chromadb setup with `text-embedding-3-small` is plenty. Then add a retrieval step before Stage 3 (A-gen) so the answerer can pull supporting recalls — this becomes a retrieval-augmented version of the pipeline.
 6. **Fine-tune a small model** (e.g., `Qwen2.5-3B-Instruct`, `Phi-3-mini`) on the validated Q&A pairs. Evaluate using the **same** LLM-as-judge framework — that's the FinNLP paper's evaluation protocol applied to food safety.
@@ -287,11 +282,11 @@ In rough priority order:
 
 | Question | Current default | Notes |
 |---|---|---|
-| Which model for the judge at scale? | `gpt-4o-mini` | Upgrade to `gpt-4o` if reviewers disagree with judge scores >20% of the time. |
+| Which model for the judge at scale? | `gpt-4o-mini` | Upgrade to `gpt-4o` if manual review disagrees with judge scores >20% of the time. |
 | Should `INSUFFICIENT_CONTEXT` rows be excluded from the dataset? | Kept, scored 0.0 | They flag Stage 1 Q-gen overreach — useful as a "to-review" bucket. |
 | Should the judge see the recall source text? | No (only Q + items + A) | Keeps the judge's job clean: rubric-based, not source-fishing. Open to revisit. |
-| Cluster definition revisit? | `hazard-category` (10) | Could switch to text-embedding k-means for ~50 finer clusters once we have more clusters' worth of Q&A. |
-| RAG over what? | Not yet | If we index, index `text` field with `text-embedding-3-small`. |
+| Cluster definition revisit? | `hazard-category` (10) | Could switch to text-embedding k-means for ~50 finer clusters once more cluster-level Q&A exists. |
+| RAG over what? | Not yet | If indexing, use the `text` field with `text-embedding-3-small`. |
 
 ---
 
@@ -301,7 +296,7 @@ In rough priority order:
 |---|---|
 | `README.md` | Quick overview + CLI / n8n quickstart |
 | `fsqa` | Shell wrapper so users can run `./fsqa <command>` from the repo root |
-| `docs/HANDOVER.md` | This document |
+| `docs/DESIGN.md` | This document |
 | `docs/meeting-notes.md` | Raw notes from the May 15 meeting |
 | `prompts/01_question_generation.md` | Stage 1 system + user prompt + rationale |
 | `prompts/02_required_items_extraction.md` | Stage 2 system + user prompt + rationale |
@@ -327,11 +322,3 @@ In rough priority order:
 - ✅ **Added** `pipeline/fsqa.py` — single CLI with `setup`, `explore`, `sample`, `run`, `wizard` subcommands. Uses typer + rich for a clean UX (live progress bar, cost tracker, summary table).
 - ✅ **Rewrote** `n8n/food-safety-qa-pipeline.json` — it now starts with a **Form Trigger** that asks for: (i) the CSV file, (ii) the hazard category, (iii) sample size, (iv) Google Sheet ID, (v) tab name. No more hard-coded data paths or sheet IDs inside the workflow.
 - 🔄 **Prompts unchanged** from v0.2 (including the Stage 3 ECHO KEY ENTITIES rule that lifted req_coverage from 0.89 → 0.96 in the v0.2 pilot).
-
----
-
-## 11. Contact for handover questions
-
-Reach out via the lab Slack / email to: Amine Mosbah · mohamedamine.benmosbah@gmail.com (until handover completes).
-
-Good luck. The pipeline is the easy part — the interesting science starts with expert validation and retrieval. 🏛️

@@ -1,6 +1,6 @@
 # Stage 1 — Question Generation Prompt
 
-**Purpose:** Generate ONE realistic, food-safety-grounded question from a recall record. The question must be independent of the answer (we generate the answer in a later stage).
+**Purpose:** Generate ONE realistic, food-safety-grounded question from a recall record. The question must be independent of the answer (answer generation runs in a later stage).
 
 The system prompt is built around an explicit **rubric for what makes a question realistic** so the model isn't just generating "describe this recall" filler.
 
@@ -65,7 +65,7 @@ Generate exactly ONE realistic food safety question about the recall below.
 
 ## Why this design
 
-- **The realism rubric inside the system prompt is the methodological contribution Fattane asked for** — the model is conditioned on what "realistic" means, not just told to generate questions.
-- **One question per call** keeps each generation deterministic and easy to evaluate. Diversity comes from running across many records (we can also do N=2-3 questions per record later if needed).
-- **Justification co-generated** with the question — forces the model to reason about quality at generation time, gives us a free metadata column for human review.
+- **The realism rubric inside the system prompt** conditions the model on what "realistic" means, not just told to generate questions.
+- **One question per call** keeps each generation deterministic and easy to evaluate. Diversity comes from running across many records (optional: N=2–3 questions per record later if needed).
+- **Justification co-generated** with the question — forces the model to reason about quality at generation time; provides a metadata column for quality review.
 - **Non-trivial rule** prevents "what hazard category is this?" leak (metadata labels are inputs, not answers).

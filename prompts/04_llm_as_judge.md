@@ -1,8 +1,8 @@
 # Stage 4 — LLM-as-Judge
 
-**Purpose:** Score the generated answer against the required/optional items extracted in Stage 2. Produces an objective, reproducible quality signal Fattane can read on every row in the output Excel.
+**Purpose:** Score the generated answer against the required/optional items extracted in Stage 2. Produces an objective, reproducible quality signal on every row in the output Excel.
 
-This is the framework Fattane requested: *"items that NEED to be in answer (required vs optional), then use LLM as a judge to evaluate, then ask LLM-as-judge how our system is performing."*
+Design framework: *"items that NEED to be in answer (required vs optional), then use LLM as a judge to evaluate, then ask LLM-as-judge how the system is performing."*
 
 ---
 
@@ -70,6 +70,6 @@ ${candidate_answer}
 
 - **Objective scoring** — each required/optional item is a binary check, so the judge produces reproducible numbers rather than a vibe rating.
 - **Weighted overall_score** (80% required, 20% optional) reflects that required coverage is non-negotiable, while optional coverage is a nice-to-have.
-- **Verdict sentence** gives a human-readable summary so Fattane can scan the Excel sheet without re-running anything.
+- **Verdict sentence** gives a readable summary so the Excel sheet can be scanned without re-running anything.
 - **Semantic match instructions** prevent false negatives from synonyms or paraphrases (e.g., "Listeria" vs "Listeria monocytogenes").
-- For the pilot we score the **gold** answer against the required items as a sanity check. In the next intern's full pipeline, they will use this exact judge to score student-model answers.
+- For the pilot, the **gold** answer is scored against the required items as a sanity check. Later, the same judge scores student-model answers.

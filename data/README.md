@@ -14,11 +14,11 @@ The single source of truth for this project. **All scripts and the n8n workflow 
 
 ### Why this single file (and not the train/valid/test splits)
 
-The original SemEval paper reports **6,644** labeled records. The release that ended up on Zenodo / CodaLab was later extended to **7,546 records** with additional fields (`product-title`, `hazard-title`, difficulty scores, language, `semeval-split` column). We use the extended release because:
+The original SemEval paper reports **6,644** labeled records. The release that ended up on Zenodo / CodaLab was later extended to **7,546 records** with additional fields (`product-title`, `hazard-title`, difficulty scores, language, `semeval-split` column). Uses the extended release because:
 
 1. More data per cluster (especially helpful for the long-tail hazard categories like `migration` = 14 records).
 2. The `semeval-split` column is preserved, so you can reconstruct the original train/valid/test splits at any time without storing three separate files.
-3. The richer columns (`hazard-title`, `product-title`, difficulty scores) are useful for future intern work on RAG / fine-tuning.
+3. The richer columns (`hazard-title`, `product-title`, difficulty scores) are useful for downstream RAG / fine-tuning work.
 
 ### Schema
 

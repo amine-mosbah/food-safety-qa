@@ -2,7 +2,7 @@
 """
 fsqa — Food Safety Q&A Generator CLI.
 
-A single entrypoint for the full handover pipeline:
+A single entrypoint for the Food Safety Q&A pipeline:
 
   fsqa setup        # one-time: paste your OpenAI API key
   fsqa explore      # show the official dataset broken down by cluster dimension
@@ -14,7 +14,7 @@ The default input is `data/food_recall_incidents.csv` (7,546 records, the offici
 SemEval-2025 Task 9 extended release). Every command has --input so you can swap
 in any file with the same schema.
 
-See README.md for the quickstart and docs/HANDOVER.md for design rationale.
+See README.md for the quickstart and docs/DESIGN.md for design rationale.
 """
 from __future__ import annotations
 
